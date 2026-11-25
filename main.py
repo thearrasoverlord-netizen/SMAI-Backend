@@ -128,7 +128,7 @@ class PlayerMemoryUpdate(BaseModel):
 
 
 class AIRequest(BaseModel):
-    player_id: str = Field(min_length=1, max_length=64)
+    player_id: str = Field(min_length=1, max_length=66)
     question: str = Field(min_length=1, max_length=MAX_QUESTION_CHARS)
     history: list[ChatMessage] = Field(default_factory=list, max_length=MAX_HISTORY_MESSAGES)
     player_memory: PlayerMemoryUpdate | None = None
@@ -138,7 +138,7 @@ class AIRequest(BaseModel):
     @classmethod
     def validate_player_id(cls, value: str) -> str:
         value = value.strip()
-        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", value):
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,66}", value):
             raise ValueError("player_id solo puede contener letras, números, _, ., : o -.")
         return value
 
