@@ -246,7 +246,16 @@ async def moderate_answer(client: AsyncGroq, answer: str) -> None:
         )
         raw = result.choices[0].message.content or ""
         verdict = json.loads(raw)
-        if verdict.get("violation") != 0:
+        violation = verdict.get("violation") if isinstance(verdict, dict) else None
+
+        # Some model responses encode the JSON number as the string "0".
+        # Accept only an explicit safe verdict; all other values remain blocked.
+        print(
+            f"Moderation verdict: violation={violation!r} "
+            f"type={type(violation).__name__}"
+        )
+        if violation not in (0, "0", False):
+            print("Moderation rejected generated answer.")
             raise HTTPException(
                 status_code=422,
                 detail={
