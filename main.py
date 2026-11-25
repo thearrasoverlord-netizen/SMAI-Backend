@@ -464,14 +464,15 @@ async def ask_ai(
         for attempt in range(2):
             attempt_messages = list(messages)
             if attempt == 1:
-                attempt_messages.append({
+                shorter_instruction = {
                     "role": "system",
                     "content": (
-                        "REESCRIBE tu respuesta anterior desde cero. Debe tener como máximo "
+                        "REESCRIBE la respuesta solicitada desde cero. Debe tener como máximo "
                         "120 caracteres, ser una frase completa y conservar la idea principal. "
                         "No expliques el límite ni añadas prefijos."
                     ),
-                })
+                }
+                attempt_messages.insert(1, shorter_instruction)
 
             completion = await client.chat.completions.create(
                 model=MODEL,
