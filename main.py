@@ -285,51 +285,61 @@ def format_chat_message(answer: str) -> str:
 
 
 async def moderate_answer(client: AsyncGroq, answer: str) -> None:
-    try:
-        result = await client.chat.completions.create(
-            model=MODERATION_MODEL,
-            messages=[
-                {"role": "system", "content": MODERATION_POLICY},
-                {"role": "user", "content": answer},
-            ],
-            reasoning_effort="low",
-            max_completion_tokens=120,
-        )
-        raw = (result.choices[0].message.content or "").strip()
-        if raw in ("0", "1"):
-            violation = int(raw)
-        else:
-            verdict = json.loads(raw)
-            violation = verdict.get("violation") if isinstance(verdict, dict) else None
-
-        # Some model responses encode the JSON number as the string "0".
-        # Accept only an explicit safe verdict; all other values remain blocked.
-        print(
-            f"Moderation verdict: violation={violation!r} "
-            f"type={type(violation).__name__}"
-        )
-        if violation not in (0, "0", False):
-            print("Moderation rejected generated answer.")
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "AI_RESPONSE_REJECTED",
-                    "message": "La respuesta fue bloqueada por el filtro de contenido.",
-                },
+    # Retry once if Groq returns an empty or malformed moderation response.
+    # Never publish an answer unless an explicit safe verdict is received.
+    last_error = "empty moderation response"
+    for attempt in range(2):
+        try:
+            result = await client.chat.completions.create(
+                model=MODERATION_MODEL,
+                messages=[
+                    {"role": "system", "content": MODERATION_POLICY},
+                    {"role": "user", "content": answer},
+                ],
+                reasoning_effort="low",
+                max_completion_tokens=256,
+                temperature=0,
             )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        # Fail closed: never publish an answer if moderation did not complete.
-        print(f"Moderation failed: {type(exc).__name__}: {exc}")
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "MODERATION_UNAVAILABLE",
-                "message": "No se pudo verificar la respuesta; no se envió ningún mensaje.",
-            },
-        ) from exc
+            raw = (result.choices[0].message.content or "").strip()
+            if raw in ("0", "1"):
+                violation = int(raw)
+            elif raw:
+                verdict = json.loads(raw)
+                violation = verdict.get("violation") if isinstance(verdict, dict) else None
+            else:
+                last_error = "empty moderation response"
+                print(f"Moderation returned empty content (attempt {attempt + 1}/2).")
+                continue
 
+            if violation not in (0, 1, "0", "1", False, True):
+                last_error = "invalid moderation verdict"
+                print(f"Moderation returned invalid verdict (attempt {attempt + 1}/2).")
+                continue
+
+            print(f"Moderation verdict: violation={violation!r} type={type(violation).__name__}")
+            if violation not in (0, "0", False):
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "AI_RESPONSE_REJECTED",
+                        "message": "La respuesta fue bloqueada por el filtro de contenido.",
+                    },
+                )
+            return
+        except HTTPException:
+            raise
+        except Exception as exc:
+            last_error = type(exc).__name__
+            print(f"Moderation attempt {attempt + 1}/2 failed: {type(exc).__name__}: {exc}")
+
+    # Fail closed after the retry: no unmoderated answer is ever sent.
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "code": "MODERATION_UNAVAILABLE",
+            "message": "No se pudo verificar la respuesta; no se envió ningún mensaje.",
+        },
+    )
 
 @app.get("/")
 async def root():
