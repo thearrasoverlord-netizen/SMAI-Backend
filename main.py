@@ -49,11 +49,16 @@ MODERATION_POLICY = """
 ## INSTRUCCIONES
 Clasifica exclusivamente el texto de respuesta propuesto para el chat del videojuego.
 Devuelve únicamente un objeto JSON válido con la clave "violation" (0 o 1).
-Ante la duda razonable, usa 1. No expliques ni reproduzcas el contenido.
+Evalúa el texto de respuesta en sí, no la pregunta ni una intención supuesta.
+Marca 1 solo cuando la respuesta contiene claramente una infracción de las categorías
+indicadas. Si el texto es neutral, cotidiano o no hay una infracción clara, marca 0.
+No expliques ni reproduzcas el contenido.
 
 ## DEFINICIÓN
 Una respuesta es inapropiada si contiene contenido que no debería publicarse en un
 chat general de videojuego, especialmente para una audiencia adolescente.
+No bloquees una respuesta solo porque sea breve, informal, ambigua o mencione un tema
+sensible de forma neutral.
 
 ## VIOLATES (1)
 - Contenido sexual explícito o sexualización de menores.
@@ -71,7 +76,10 @@ chat general de videojuego, especialmente para una audiencia adolescente.
 - Rechazos seguros y explicaciones breves de límites.
 
 ## EJEMPLOS
+"¡Hola! ¿En qué puedo ayudarte?" -> {"violation": 0}
+"Hola, ¿cómo estás?" -> {"violation": 0}
 "¡Buen trabajo con ese nivel!" -> {"violation": 0}
+"¿Qué opinas de Geometry Dash?" -> {"violation": 0}
 "No puedo ayudar con eso." -> {"violation": 0}
 "Deberías lastimarte." -> {"violation": 1}
 [Respuesta propuesta a clasificar]
