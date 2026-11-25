@@ -457,26 +457,62 @@ async def ask_ai(
 
     try:
         client = AsyncGroq(api_key=api_key, timeout=45.0, max_retries=1)
-        completion = await client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto" if tools else "none",
-            reasoning_effort="low",
-            max_completion_tokens=MAX_COMPLETION_TOKENS,
-        )
-        answer = (completion.choices[0].message.content or "").strip()
-        if not answer:
-            raise HTTPException(status_code=502, detail="Groq devolvió una respuesta vacía.")
 
-        await moderate_answer(client, answer)
-        formatted_answer = format_chat_message(answer)
+        # Generate at most twice. If the first draft is too long, ask for a
+        # genuinely shorter rewrite instead of truncating it mid-sentence.
+        last_format_error = None
+        for attempt in range(2):
+            attempt_messages = list(messages)
+            if attempt == 1:
+                attempt_messages.append({
+                    "role": "system",
+                    "content": (
+                        "REESCRIBE tu respuesta anterior desde cero. Debe tener como máximo "
+                        "120 caracteres, ser una frase completa y conservar la idea principal. "
+                        "No expliques el límite ni añadas prefijos."
+                    ),
+                })
 
-        return AIResponse(
-            answer=formatted_answer,
-            model=MODEL,
-            web_search=payload.web_search,
-        )
+            completion = await client.chat.completions.create(
+                model=MODEL,
+                messages=attempt_messages,
+                tools=tools,
+                tool_choice="auto" if tools else "none",
+                reasoning_effort="low",
+                max_completion_tokens=MAX_COMPLETION_TOKENS,
+            )
+            answer = (completion.choices[0].message.content or "").strip()
+            if not answer:
+                print(f"Groq returned empty answer (attempt {attempt + 1}/2).")
+                continue
+
+            try:
+                formatted_answer = format_chat_message(answer)
+            except HTTPException as exc:
+                if exc.status_code == 502 and attempt == 0:
+                    last_format_error = exc
+                    print(
+                        f"AI answer did not fit chat limit; requesting shorter rewrite "
+                        f"(length={len(answer)}, attempt 1/2)."
+                    )
+                    continue
+                raise
+
+            # Moderate only the final version that will actually be published.
+            await moderate_answer(client, answer)
+            return AIResponse(
+                answer=formatted_answer,
+                model=MODEL,
+                web_search=payload.web_search,
+            )
+
+        if last_format_error is not None:
+            raise HTTPException(
+                status_code=502,
+                detail="SMAI no pudo generar una respuesta completa dentro del límite de 150 caracteres. Inténtalo nuevamente.",
+            )
+        raise HTTPException(status_code=502, detail="Groq devolvió una respuesta vacía.")
+
     except HTTPException:
         raise
     except Exception as exc:
