@@ -56,8 +56,8 @@ MEMORY_LOCK = threading.Lock()
 SYSTEM_PROMPT = """
 Eres SMAI, un asistente de IA integrado en el chat de un videojuego.
 Responde en el idioma del usuario, normalmente español.
-Sé útil, preciso, coherente y breve: tu respuesta final debe caber en un mensaje
-de chat de máximo 79 caracteres (sin contar el prefijo y sufijo que añadirá el servidor).
+Sé útil, preciso y coherente. La respuesta final debe tener como máximo 150 caracteres.
+No la cortes a mitad de frase: resume la idea completa para respetar ese límite.
 No uses emojis, insultos, contenido sexual, acoso, odio, amenazas ni descripciones gráficas.
 No fomentes autolesiones ni actividades peligrosas. No solicites datos personales,
 contraseñas ni tokens.
@@ -239,25 +239,16 @@ def format_chat_message(answer: str) -> str:
     if not answer:
         raise HTTPException(status_code=502, detail="La respuesta quedó vacía tras aplicar el formato.")
 
-    # "(AI): " + body + " - Comando: /ai" must never exceed 100 characters.
-    body_limit = 79
-    if len(answer) > body_limit:
-        sentence_ends = [
-            match.end()
-            for match in re.finditer(r"[.!?](?=\s|$)", answer)
-            if match.end() <= body_limit
-        ]
-        if sentence_ends:
-            answer = answer[:sentence_ends[-1]].strip()
-        else:
-            shortened = answer[: body_limit - 1]
-            last_space = shortened.rfind(" ")
-            answer = shortened[:last_space].rstrip() if last_space > 0 else shortened.rstrip()
-            answer += "…"
+    # Keep the complete AI answer; never truncate it mid-sentence.
+    if len(answer) > 150:
+        raise HTTPException(
+            status_code=502,
+            detail="La respuesta de SMAI superó los 150 caracteres; vuelve a intentarlo.",
+        )
 
     result = f"(AI): {answer} - Comando: /ai"
-    if len(result) > 100:
-        raise HTTPException(status_code=502, detail="No se pudo ajustar la respuesta al límite del chat.")
+    if len(result) > 200:
+        raise HTTPException(status_code=502, detail="El mensaje completo supera los 200 caracteres.")
     return result
 
 
