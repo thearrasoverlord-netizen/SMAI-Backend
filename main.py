@@ -1,5 +1,6 @@
 import json
 import os
+import hmac
 import re
 import threading
 from pathlib import Path
@@ -125,6 +126,37 @@ class PlayerMemoryUpdate(BaseModel):
     device: str | None = Field(default=None, max_length=80)
     game: str | None = Field(default=None, max_length=80)
     notes: str | None = Field(default=None, max_length=240)
+
+
+class AdminMemoryRequest(BaseModel):
+    operation: Literal["add", "delete", "delete_all", "list", "get"]
+    player_id: str | None = Field(default=None, min_length=1, max_length=66)
+    memory_id: str | None = Field(default=None, min_length=1, max_length=40)
+    content: str | None = Field(default=None, min_length=1, max_length=240)
+    confirm: bool = False
+
+    @field_validator("player_id")
+    @classmethod
+    def validate_admin_player_id(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"p_[a-f0-9]{64}", value):
+            raise ValueError("Identificador de jugador inválido.")
+        return value
+
+    @field_validator("memory_id")
+    @classmethod
+    def validate_memory_id(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", value):
+            raise ValueError("ID de memoria inválida.")
+        return value
+
+    @field_validator("content")
+    @classmethod
+    def clean_memory_content(cls, value: str | None) -> str | None:
+        if value is not None:
+            value = value.strip()
+            if not value:
+                raise ValueError("La memoria no puede estar vacía.")
+        return value
 
 
 class AIRequest(BaseModel):
@@ -305,6 +337,83 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+def verify_admin_token(x_admin_token: str | None) -> None:
+    expected = os.getenv("SUBAI_ADMIN_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Falta configurar SUBAI_ADMIN_TOKEN en el backend.")
+    if not x_admin_token or not hmac.compare_digest(x_admin_token, expected):
+        raise HTTPException(status_code=403, detail="Acceso denegado: comando exclusivo del administrador.")
+
+
+@app.post("/admin/memories")
+async def manage_admin_memories(
+    payload: AdminMemoryRequest,
+    x_bot_token: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    verify_bot_token(x_bot_token)
+    verify_admin_token(x_admin_token)
+
+    with MEMORY_LOCK:
+        memories = read_all_memories()
+
+        if payload.operation == "delete_all":
+            if not payload.confirm:
+                raise HTTPException(status_code=400, detail="Se requiere confirm=true para borrar todas las memorias.")
+            PLAYER_MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+            temporary = PLAYER_MEMORY_FILE.with_suffix(PLAYER_MEMORY_FILE.suffix + ".tmp")
+            temporary.write_text("{}", encoding="utf-8")
+            os.replace(temporary, PLAYER_MEMORY_FILE)
+            return {"message": "Todas las memorias de todos los jugadores fueron eliminadas."}
+
+        if not payload.player_id:
+            raise HTTPException(status_code=400, detail="Falta el jugador de destino.")
+        player = memories.get(payload.player_id, {})
+        if not isinstance(player, dict):
+            player = {}
+        custom = player.get("custom_memories", {})
+        if not isinstance(custom, dict):
+            custom = {}
+
+        if payload.operation == "add":
+            if not payload.memory_id or not payload.content:
+                raise HTTPException(status_code=400, detail="Se requieren memory_id y content.")
+            if payload.memory_id in custom:
+                raise HTTPException(status_code=409, detail="Ya existe una memoria con ese ID.")
+            custom[payload.memory_id] = payload.content
+            player["custom_memories"] = custom
+            memories[payload.player_id] = player
+            message = f"Memoria {payload.memory_id} guardada para el jugador."
+        elif payload.operation == "delete":
+            if not payload.memory_id:
+                raise HTTPException(status_code=400, detail="Falta memory_id.")
+            if payload.memory_id not in custom:
+                raise HTTPException(status_code=404, detail="No existe una memoria con ese ID.")
+            del custom[payload.memory_id]
+            player["custom_memories"] = custom
+            memories[payload.player_id] = player
+            message = f"Memoria {payload.memory_id} eliminada."
+        elif payload.operation == "list":
+            if not custom:
+                return {"message": "Este jugador no tiene memorias personalizadas.", "memories": {}}
+            return {"message": "Memorias del jugador: " + "; ".join(f"{key}: {value}" for key, value in custom.items()), "memories": custom}
+        elif payload.operation == "get":
+            if not payload.memory_id:
+                raise HTTPException(status_code=400, detail="Falta memory_id.")
+            if payload.memory_id not in custom:
+                raise HTTPException(status_code=404, detail="No existe una memoria con ese ID.")
+            value = custom[payload.memory_id]
+            return {"message": f"Memoria {payload.memory_id}: {value}", "memory": {"id": payload.memory_id, "content": value}}
+        else:
+            raise HTTPException(status_code=400, detail="Operación no válida.")
+
+        PLAYER_MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = PLAYER_MEMORY_FILE.with_suffix(PLAYER_MEMORY_FILE.suffix + ".tmp")
+        temporary.write_text(json.dumps(memories, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, PLAYER_MEMORY_FILE)
+        return {"message": message}
 
 
 @app.post("/ai", response_model=AIResponse)
