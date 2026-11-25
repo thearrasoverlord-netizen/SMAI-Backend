@@ -78,7 +78,7 @@ MODERATION_POLICY = """
 
 ## INSTRUCCIONES
 Clasifica exclusivamente el texto de respuesta propuesto para el chat del videojuego.
-Devuelve únicamente un objeto JSON válido con la clave "violation" (0 o 1).
+Devuelve exclusivamente un único carácter: 0 si no hay infracción clara o 1 si hay una infracción clara. No añadas JSON, explicaciones ni formato adicional.
 Evalúa el texto de respuesta en sí, no la pregunta ni una intención supuesta.
 Marca 1 solo cuando la respuesta contiene claramente una infracción de las categorías
 indicadas. Si el texto es neutral, cotidiano o no hay una infracción clara, marca 0.
@@ -292,13 +292,15 @@ async def moderate_answer(client: AsyncGroq, answer: str) -> None:
                 {"role": "system", "content": MODERATION_POLICY},
                 {"role": "user", "content": answer},
             ],
-            response_format={"type": "json_object"},
             reasoning_effort="low",
             max_completion_tokens=120,
         )
-        raw = result.choices[0].message.content or ""
-        verdict = json.loads(raw)
-        violation = verdict.get("violation") if isinstance(verdict, dict) else None
+        raw = (result.choices[0].message.content or "").strip()
+        if raw in ("0", "1"):
+            violation = int(raw)
+        else:
+            verdict = json.loads(raw)
+            violation = verdict.get("violation") if isinstance(verdict, dict) else None
 
         # Some model responses encode the JSON number as the string "0".
         # Accept only an explicit safe verdict; all other values remain blocked.
