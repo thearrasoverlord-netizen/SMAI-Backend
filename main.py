@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from groq import AsyncGroq
 from pydantic import BaseModel, Field, field_validator
 
@@ -14,6 +16,33 @@ app = FastAPI(
     description="Private AI backend for TheSickMenu.",
     version="0.2.0",
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def log_request_validation_error(request, exc: RequestValidationError):
+    # Log only field locations and error types; never log submitted values.
+    safe_errors = [
+        {
+            "loc": list(error.get("loc", ())),
+            "type": error.get("type", "unknown"),
+            "msg": error.get("msg", "Invalid request"),
+        }
+        for error in exc.errors()
+    ]
+    print(
+        "Request validation failed: " + json.dumps(safe_errors, ensure_ascii=False),
+        flush=True,
+    )
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": {
+                "code": "REQUEST_VALIDATION_FAILED",
+                "message": "La solicitud no cumple el formato esperado.",
+                "errors": safe_errors,
+            }
+        },
+    )
 
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 MODERATION_MODEL = "openai/gpt-oss-safeguard-20b"
