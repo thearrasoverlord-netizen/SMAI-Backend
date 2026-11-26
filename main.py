@@ -57,7 +57,7 @@ MEMORY_LOCK = threading.Lock()
 SYSTEM_PROMPT = """
 Eres SMAI, un asistente de IA integrado en el chat de un videojuego.
 Responde en el idioma del usuario, normalmente español.
-Sé útil, preciso y coherente. La respuesta final debe tener como máximo 150 caracteres.
+Sé útil, preciso y coherente. La respuesta final debe tener como máximo 80 caracteres.
 No la cortes a mitad de frase: resume la idea completa para respetar ese límite.
 No uses emojis, insultos, contenido sexual, acoso, odio, amenazas ni descripciones gráficas.
 No fomentes autolesiones ni actividades peligrosas. No solicites datos personales,
@@ -272,16 +272,13 @@ def format_chat_message(answer: str) -> str:
         raise HTTPException(status_code=502, detail="La respuesta quedó vacía tras aplicar el formato.")
 
     # Keep the complete AI answer; never truncate it mid-sentence.
-    if len(answer) > 150:
+    if len(answer) > 80:
         raise HTTPException(
             status_code=502,
-            detail="La respuesta de SMAI superó los 150 caracteres; vuelve a intentarlo.",
+            detail="La respuesta de SMAI superó los 80 caracteres; vuelve a intentarlo.",
         )
 
-    result = f"(AI): {answer} - Comando: /ai"
-    if len(result) > 200:
-        raise HTTPException(status_code=502, detail="El mensaje completo supera los 200 caracteres.")
-    return result
+    return f"(AI): {answer}"
 
 
 async def moderate_answer(client: AsyncGroq, answer: str) -> None:
